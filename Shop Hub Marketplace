@@ -1,0 +1,419 @@
+shop-hub/
+│
+├── backend/
+│   ├── server.js
+│   ├── models.js
+│   ├── db.js
+│   ├── uploads/
+│
+├── frontend/
+│   ├── index.html
+│   ├── login.html
+│   ├── seller.html
+│   ├── admin.html
+│   ├── style.css
+│   ├── app.js
+│
+├── package.json
+└── README.md
+
+const express = require("express");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const multer = require("multer");
+const cors = require("cors");
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+let users = [];
+let products = [];
+let orders = [];
+
+// JWT Middleware
+function auth(req,res,next){
+    const token = req.headers["token"];
+    if(!token) return res.send("No token");
+
+    try{
+        req.user = jwt.verify(token, "SECRET");
+        next();
+    }catch{
+        res.send("Invalid token");
+    }
+}
+
+/* ---------------- AUTH ---------------- */
+
+app.post("/signup", async (req,res)=>{
+    const hash = await bcrypt.hash(req.body.password,10);
+
+    users.push({
+        id: Date.now(),
+        name:req.body.name,
+        email:req.body.email,
+        password:hash,
+        role:req.body.role || "customer"
+    });
+
+    res.send("User created");
+});
+
+app.post("/login", async (req,res)=>{
+    const user = users.find(u=>u.email === req.body.email);
+    if(!user) return res.send("User not found");
+
+    const match = await bcrypt.compare(req.body.password, user.password);
+    if(!match) return res.send("Wrong password");
+
+    const token = jwt.sign(user,"SECRET");
+    res.json({token, role:user.role});
+});
+
+/* ---------------- PRODUCTS ---------------- */
+
+const storage = multer.diskStorage({
+    destination:"uploads/",
+    filename:(req,file,cb)=>{
+        cb(null,Date.now()+file.originalname);
+    }
+});
+
+const upload = multer({storage});
+
+app.post("/add-product", auth, upload.single("image"), (req,res)=>{
+    const product = {
+        id:Date.now(),
+        name:req.body.name,
+        price:req.body.price,
+        owner:req.user.email,
+        image:req.file.filename
+    };
+
+    products.push(product);
+    res.send(product);
+});
+
+app.get("/products",(req,res)=>{
+    res.json(products);
+});
+
+/* ---------------- ORDERS ---------------- */
+
+app.post("/order", auth, (req,res)=>{
+    const order = {
+        id:Date.now(),
+        product:req.body.product,
+        user:req.user.email,
+        status:"Processing"
+    };
+
+    orders.push(order);
+    res.send(order);
+});
+
+/* ---------------- AI RECOMMENDATION ---------------- */
+
+app.get("/recommend/:keyword",(req,res)=>{
+    const result = products.filter(p =>
+        p.name.toLowerCase().includes(req.params.keyword.toLowerCase())
+    );
+
+    res.json(result);
+});
+
+/* ---------------- START ---------------- */
+
+app.listen(3000, ()=>{
+    console.log("Shop HUB running on http://localhost:3000");
+});
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>Shop HUB Marketplace</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<header>
+    <h1>🛒 Shop HUB Marketplace</h1>
+    <a href="login.html">Login</a>
+</header>
+
+<input id="search" placeholder="Search products..." onkeyup="search()">
+
+<div id="products"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
+
+body{
+    font-family:Arial;
+    margin:0;
+    background:linear-gradient(45deg,#ff0000,#00ff00,#0000ff);
+    color:white;
+}
+
+header{
+    background:black;
+    padding:15px;
+    display:flex;
+    justify-content:space-between;
+}
+
+#products{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+    gap:10px;
+    padding:20px;
+}
+
+.card{
+    background:white;
+    color:black;
+    padding:10px;
+    border-radius:10px;
+}
+
+let token = "";
+
+async function loadProducts(){
+    let res = await fetch("http://localhost:3000/products");
+    let data = await res.json();
+
+    document.getElementById("products").innerHTML =
+        data.map(p=>`
+        <div class="card">
+            <h3>${p.name}</h3>
+            <p>$${p.price}</p>
+            <button onclick="order('${p.name}')">Buy</button>
+        </div>
+        `).join("");
+}
+
+async function order(product){
+    await fetch("http://localhost:3000/order",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            "token":token
+        },
+        body:JSON.stringify({product})
+    });
+
+    alert("Order placed!");
+}
+
+function search(){
+    let value = document.getElementById("search").value.toLowerCase();
+    document.querySelectorAll(".card").forEach(card=>{
+        card.style.display = card.innerText.toLowerCase().includes(value) ? "block":"none";
+    });
+}
+
+loadProducts();
+
+<h2>Login</h2>
+
+<input id="email" placeholder="Email">
+<input id="password" type="password" placeholder="Password">
+
+<button onclick="login()">Login</button>
+
+<script>
+async function login(){
+    let res = await fetch("http://localhost:3000/login",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+            email:email.value,
+            password:password.value
+        })
+    });
+
+    let data = await res.json();
+    localStorage.setItem("token",data.token);
+    alert("Logged in!");
+}
+</script>
+
+:root{
+  --primary:red;
+  --secondary:blue;
+  --accent:green;
+  --dark:black;
+  --light:white;
+}
+
+button{
+  background:var(--primary);
+}
+
+<!DOCTYPE html>
+<html>
+<head>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/framer-motion@10"></script>
+</head>
+
+<body class="bg-gradient-to-r from-red-500 via-blue-500 to-green-500 text-white">
+
+<div class="text-center mt-20 animate-pulse">
+    <h1 class="text-5xl font-bold">Shop HUB Marketplace</h1>
+    <p>Buy • Sell • Earn</p>
+</div>
+
+</body>
+</html>
+
+const express = require("express");
+const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const cors = require("cors");
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+/* ================= DATABASE ================= */
+mongoose.connect("mongodb://127.0.0.1:27017/shophub");
+
+/* ================= MODELS ================= */
+const User = mongoose.model("User", {
+    name: String,
+    email: String,
+    password: String,
+    role: String // customer | seller | admin
+});
+
+const Product = mongoose.model("Product", {
+    name: String,
+    price: Number,
+    image: String,
+    category: String,
+    sellerId: String,
+    rating: Number
+});
+
+const Order = mongoose.model("Order", {
+    userId: String,
+    products: Array,
+    status: String,
+    createdAt: Date
+});
+
+/* ================= AUTH ================= */
+app.post("/register", async (req,res)=>{
+    const hash = await bcrypt.hash(req.body.password,10);
+
+    const user = await User.create({
+        name:req.body.name,
+        email:req.body.email,
+        password:hash,
+        role:req.body.role || "customer"
+    });
+
+    res.json(user);
+});
+
+app.post("/login", async (req,res)=>{
+    const user = await User.findOne({email:req.body.email});
+    if(!user) return res.send("User not found");
+
+    const ok = await bcrypt.compare(req.body.password, user.password);
+    if(!ok) return res.send("Wrong password");
+
+    const token = jwt.sign({id:user._id,role:user.role},"SECRET_KEY");
+
+    res.json({token,user});
+});
+
+/* ================= PRODUCTS ================= */
+app.post("/product", async (req,res)=>{
+    const product = await Product.create(req.body);
+    res.json(product);
+});
+
+app.get("/products", async (req,res)=>{
+    const products = await Product.find();
+    res.json(products);
+});
+
+/* ================= ORDERS ================= */
+app.post("/order", async (req,res)=>{
+    const order = await Order.create({
+        userId:req.body.userId,
+        products:req.body.products,
+        status:"Processing",
+        createdAt:new Date()
+    });
+
+    res.json(order);
+});
+
+/* ================= AI RECOMMENDATION ================= */
+app.get("/ai/recommend/:key", async (req,res)=>{
+    const data = await Product.find({
+        name: { $regex: req.params.key, $options:"i" }
+    });
+
+    res.json(data);
+});
+
+app.listen(5000, ()=>{
+    console.log("🚀 Shop HUB PRO running on port 5000");
+});
+
+export default function Home(){
+  return (
+    <div className="bg-gray-100 min-h-screen">
+
+      <header className="bg-black text-white p-4 flex justify-between">
+        <h1 className="text-2xl">Shop HUB</h1>
+        <input placeholder="Search products..." className="p-2 text-black"/>
+      </header>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
+
+        <div className="bg-white p-4 shadow rounded hover:scale-105 transition">
+          <h2>Smartphone</h2>
+          <p>$200</p>
+        </div>
+
+        <div className="bg-white p-4 shadow rounded hover:scale-105 transition">
+          <h2>Laptop</h2>
+          <p>$800</p>
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
+
+const stripe = require("stripe")("SECRET");
+
+app.post("/checkout", async (req,res)=>{
+    const session = await stripe.checkout.sessions.create({
+        payment_method_types:["card"],
+        line_items:[{
+            price_data:{
+                currency:"usd",
+                product_data:{name:"Shop HUB Order"},
+                unit_amount:1000
+            },
+            quantity:1
+        }],
+        mode:"payment",
+        success_url:"https://your-site.com/success",
+        cancel_url:"https://your-site.com/cancel"
+    });
+
+    res.json({url:session.url});
+});
+
